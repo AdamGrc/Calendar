@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calendrier des absences - Grist Intégral</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff; --bg2: #f7f7f5; --bg3: #efefec;
+    --text: #1a1a18; --text2: #6b6b65; --text3: #a0a09a;
+    --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.18);
+    --radius: 8px; --radius-lg: 12px; --shadow: 0 2px 12px rgba(0,0,0,0.08);
+
+    /* Couleurs des catégories[cite: 1] */
+    --conge-bg: #dbeafe; --conge-text: #1e40af; --conge-border: #93c5fd;
+    --stage-bg: #dcfce7; --stage-text: #166534; --stage-border: #86efac;
+    --teletravail-bg: #fef3c7; --teletravail-text: #92400e; --teletravail-border: #fcd34d;
+    --maladie-bg: #fee2e2; --maladie-text: #991b1b; --maladie-border: #fca5a5;
+    --formation-bg: #ede9fe; --formation-text: #5b21b6; --formation-border: #c4b5fd;
+    --autre-bg: #f1f0ec; --autre-text: #44443e; --autre-border: #d0cfc8;
+    
+    --select-bg: #3b82f6;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a; --bg2: #252523; --bg3: #2e2e2b;
+      --text: #f0f0ec; --text2: #a0a09a; --text3: #6b6b65;
+      --border: rgba(255,255,255,0.1);
+      --conge-bg: #1e3a5f; --conge-text: #93c5fd;
+      --teletravail-bg: #451a03; --teletravail-text: #fcd34d;
+    }
+  }
+
+  html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; user-select: none; }
+  #app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+  /* Topbar & Légende */
+  .topbar { padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+  .topbar-main { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 10px; }
+  .nav-group { display: flex; align-items: center; gap: 6px; }
+  .btn-icon { background: none; border: 1px solid var(--border2); border-radius: var(--radius); width: 30px; height: 30px; cursor: pointer; color: var(--text); display: flex; align-items: center; justify-content: center; }
+  .month-label { font-size: 15px; font-weight: 600; min-width: 155px; text-align: center; }
+
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 0; border-top: 1px solid var(--bg2); }
+  .leg { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text2); font-weight: 500; }
+  .leg-dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid transparent; display: flex; align-items: center; justify-content: center; font-size: 7px; color: inherit; }
+
+  .add-bar { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg); }
+  .add-bar input { flex: 1; border: 1px solid var(--border2); border-radius: var(--radius); padding: 5px 10px; background: var(--bg); color: var(--text); outline: none; max-width: 260px; }
+  .btn { border: 1px solid var(--border2); border-radius: var(--radius); padding: 5px 12px; cursor: pointer; background: var(--bg2); color: var(--text); font-size: 13px; }
+  .btn-primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+  /* Table */
+  .table-wrap { flex: 1; overflow: auto; }
+  table { border-collapse: collapse; min-width: 100%; }
+  thead { position: sticky; top: 0; z-index: 10; background: var(--bg); }
+  th, td { border-bottom: 1px solid var(--border); }
+  .th-name, .td-name { position: sticky; left: 0; z-index: 5; background: var(--bg); border-right: 1px solid var(--border); padding: 8px 12px; width: 140px; font-weight: 500; }
+  .th-day { min-width: 34px; text-align: center; padding: 6px 0; font-size: 11px; }
+  .cell { width: 28px; height: 28px; border-radius: 6px; cursor: pointer; margin: auto; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; border: 1px solid transparent; transition: transform 0.1s; }
+  .cell:hover:not(.wknd) { transform: scale(1.1); }
+  .cell.selected { background: var(--select-bg) !important; color: white !important; border-color: #2563eb !important; }
+  .cell.wknd { background: var(--bg3); cursor: default; opacity: 0.6; }
+
+  /* Types Styles[cite: 1] */
+  .conge { background: var(--conge-bg); color: var(--conge-text); border-color: var(--conge-border); }
+  .stage { background: var(--stage-bg); color: var(--stage-text); border-color: var(--stage-border); }
+  .teletravail { background: var(--teletravail-bg); color: var(--teletravail-text); border-color: var(--teletravail-border); }
+  .maladie { background: var(--maladie-bg); color: var(--maladie-text); border-color: var(--maladie-border); }
+  .formation { background: var(--formation-bg); color: var(--formation-text); border-color: var(--formation-border); }
+  .autre { background: var(--autre-bg); color: var(--autre-text); border-color: var(--autre-border); }
+
+  /* Modal */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; align-items: center; justify-content: center; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--bg); border-radius: var(--radius-lg); padding: 20px; width: 320px; box-shadow: var(--shadow); border: 1px solid var(--border2); }
+  .type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 18px 0; }
+  .type-btn { padding: 12px 8px; border-radius: var(--radius); border: 2px solid transparent; cursor: pointer; font-size: 12px; font-weight: 600; text-align: center; }
+  .type-btn.sel { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+
+  .statusbar { padding: 6px 14px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); display: flex; justify-content: space-between; background: var(--bg); }
+</style>
+</head>
+<body onmouseup="endSelection()">
+
+<div id="loader" style="display:flex; align-items:center; justify-content:center; height:100vh;">Chargement...</div>
+
+<div id="app" style="display:none">
+  <div class="topbar">
+    <div class="topbar-main">
+      <div class="nav-group">
+        <button class="btn-icon" onclick="changeMonth(-1)">←</button>
+        <span class="month-label" id="monthLabel"></span>
+        <button class="btn-icon" onclick="changeMonth(1)">→</button>
+        <button class="btn" style="margin-left:8px" onclick="goToday()">Aujourd'hui</button>
+      </div>
+      <button class="btn" onclick="exportCSV()">Export CSV</button>
+    </div>
+    
+    <!-- La légende restaurée[cite: 1] -->
+    <div class="legend">
+      <div class="leg"><div class="leg-dot conge">C</div> Congé</div>
+      <div class="leg"><div class="leg-dot teletravail">TT</div> Télétravail</div>
+      <div class="leg"><div class="leg-dot stage">St</div> Stage</div>
+      <div class="leg"><div class="leg-dot maladie">M</div> Maladie</div>
+      <div class="leg"><div class="leg-dot formation">F</div> Formation</div>
+      <div class="leg"><div class="leg-dot autre">A</div> Autre</div>
+    </div>
+  </div>
+
+  <div class="add-bar">
+    <input type="text" id="newName" placeholder="Nouvelle personne..." onkeydown="if(event.key==='Enter')addPerson()">
+    <button class="btn btn-primary" onclick="addPerson()">+ Ajouter</button>
+  </div>
+
+  <div class="table-wrap">
+    <table id="calTable">
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="statusbar">
+    <span id="statTotal">0 absences</span>
+    <span id="gristStatus">Initialisation Grist...</span>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div id="mHead" style="font-size:16px; font-weight:bold; margin-bottom:4px"></div>
+    <div id="mSub" style="font-size:12px; color:var(--text2)"></div>
+    <div class="type-grid">
+      <div class="type-btn conge" onclick="selectType('conge')">🏖️ Congé</div>
+      <div class="type-btn stage" onclick="selectType('stage')">🎓 Stage</div>
+      <div class="type-btn teletravail" onclick="selectType('teletravail')">🏠 Télétravail</div>
+      <div class="type-btn maladie" onclick="selectType('maladie')">🤒 Maladie</div>
+      <div class="type-btn formation" onclick="selectType('formation')">📚 Formation</div>
+      <div class="type-btn autre" onclick="selectType('autre')">📌 Autre</div>
+    </div>
+    <div style="display:flex; gap:10px">
+      <button class="btn" style="color:#dc2626; border-color:#fecaca" id="btnDel" onclick="deleteEntry()">Supprimer</button>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveEntry()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COL_PERSONNE = 'Personne';
+const COL_DATE     = 'Date';
+const COL_TYPE     = 'Type';
+
+let curYear = new Date().getFullYear(), curMonth = new Date().getMonth();
+let absences = {}, people = [], gristReady = false, tableName = null;
+let isDragging = false, dragPerson = null, dragStartDay = null, dragEndDay = null, modalCtx = null, selType = null;
+
+// Abréviations pour les cellules[cite: 1]
+const LABELS = {conge:'C', stage:'St', teletravail:'TT', maladie:'M', formation:'F', autre:'A'};
+
+// --- LOGIQUE DATES GRIST ---
+function dateToStr(v) {
+  if (typeof v === 'number') return new Date(v * 1000).toISOString().slice(0, 10);
+  return typeof v === 'string' ? v.slice(0, 10) : String(v);
+}
+function strToGristDate(s) {
+  return Math.floor(new Date(s + 'T00:00:00Z').getTime() / 1000);
+}
+
+function render() {
+  const days = new Date(curYear, curMonth + 1, 0).getDate();
+  const frMonth = new Intl.DateTimeFormat('fr-FR', {month:'long', year:'numeric'}).format(new Date(curYear, curMonth));
+  document.getElementById('monthLabel').textContent = frMonth.charAt(0).toUpperCase() + frMonth.slice(1);
+  
+  let thead = '<th class="th-name">Personne</th>';
+  for (let d = 1; d <= days; d++) {
+    const day = new Date(curYear, curMonth, d);
+    const isW = day.getDay() % 6 === 0;
+    thead += `<th class="th-day ${isW?'wknd':''}">${d}</th>`;
+  }
+  document.getElementById('thead').innerHTML = thead;
+
+  let tbody = '';
+  people.sort().forEach(p => {
+    tbody += `<tr><td class="td-name">${p}</td>`;
+    for (let d = 1; d <= days; d++) {
+      const ds = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const abs = absences[p + '|' + ds];
+      const isW = new Date(curYear, curMonth, d).getDay() % 6 === 0;
+      let cls = isW ? 'cell wknd' : (abs ? 'cell ' + abs.type : 'cell empty');
+      tbody += `<td class="td-cell"><div class="${cls}" data-person="${p}" data-day="${d}" onmousedown="startSelection(event, '${p}', ${d})" onmouseenter="updateSelection(${d})">${(!isW && abs) ? LABELS[abs.type] : ''}</div></td>`;
+    }
+    tbody += '</tr>';
+  });
+  document.getElementById('tbody').innerHTML = tbody;
+  document.getElementById('statTotal').textContent = Object.keys(absences).length + " absence(s) enregistrée(s)";
+}
+
+// -- SÉLECTION --
+function startSelection(e, p, d) { if(new Date(curYear, curMonth, d).getDay()%6===0) return; isDragging = true; dragPerson = p; dragStartDay = d; dragEndDay = d; updateVisuals(); }
+function updateSelection(d) { if(!isDragging) return; dragEndDay = d; updateVisuals(); }
+function updateVisuals() {
+  const min = Math.min(dragStartDay, dragEndDay), max = Math.max(dragStartDay, dragEndDay);
+  document.querySelectorAll('.cell').forEach(el => {
+    const d = parseInt(el.dataset.day);
+    el.classList.toggle('selected', isDragging && el.dataset.person === dragPerson && d >= min && d <= max && !el.classList.contains('wknd'));
+  });
+}
+function endSelection() {
+  if(!isDragging) return; isDragging = false;
+  let dates = [];
+  for(let d=Math.min(dragStartDay, dragEndDay); d<=Math.max(dragStartDay, dragEndDay); d++) {
+    if(new Date(curYear, curMonth, d).getDay()%6 !== 0) dates.push(`${curYear}-${String(curMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+  }
+  if(dates.length) openModal(dragPerson, dates);
+}
+
+function openModal(p, dts) {
+  modalCtx = {person:p, dates:dts};
+  selType = (dts.length === 1 && absences[p+'|'+dts[0]]) ? absences[p+'|'+dts[0]].type : null;
+  document.getElementById('mHead').textContent = p;
+  document.getElementById('mSub').textContent = dts.length > 1 ? dts.length + " jours sélectionnés" : dts[0];
+  document.getElementById('btnDel').style.display = (dts.length === 1 && selType) ? '' : 'none';
+  document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('sel', b.classList.contains(selType)));
+  document.getElementById('overlay').classList.add('open');
+}
+function closeModal() { document.getElementById('overlay').classList.remove('open'); updateVisuals(); }
+function selectType(t) { selType = t; document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('sel', b.classList.contains(selType))); }
+
+// -- SAUVEGARDE --
+async function saveEntry() {
+  if (!selType || !tableName) return closeModal();
+  const actions = [];
+  modalCtx.dates.forEach(d => {
+    const key = modalCtx.person + '|' + d;
+    absences[key] = { type: selType, rowId: absences[key]?.rowId };
+    if (absences[key].rowId) actions.push(['UpdateRecord', tableName, absences[key].rowId, {[COL_TYPE]: selType}]);
+    else actions.push(['AddRecord', tableName, null, {[COL_PERSONNE]: modalCtx.person, [COL_DATE]: strToGristDate(d), [COL_TYPE]: selType}]);
+  });
+  render(); closeModal();
+  try { await grist.docApi.applyUserActions(actions); } catch(e) { console.error(e); }
+}
+
+async function deleteEntry() {
+  const key = modalCtx.person + '|' + modalCtx.dates[0];
+  if (absences[key]?.rowId) await grist.docApi.applyUserActions([['RemoveRecord', tableName, absences[key].rowId]]);
+  delete absences[key];
+  render(); closeModal();
+}
+
+// -- GRIST API --
+grist.ready({ requiredAccess: 'full' });
+grist.onRecords((records) => {
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  if (!tableName && records.length > 0) tableName = records[0]._tableId;
+
+  absences = {};
+  const pSet = new Set();
+  records.forEach(r => {
+    const p = String(r[COL_PERSONNE] || '').trim(), d = dateToStr(r[COL_DATE]), t = String(r[COL_TYPE] || '').toLowerCase();
+    if(p && d) {
+      if(!pSet.has(p)) { if(!people.includes(p)) people.push(p); pSet.add(p); }
+      absences[p + '|' + d] = { rowId: r.id, type: t };
+    }
+  });
+  document.getElementById('gristStatus').textContent = tableName ? `Table : ${tableName}` : "Prêt";
+  render();
+});
+
+grist.on('message', msg => { if(msg.tableId) tableName = msg.tableId; });
+
+function addPerson() { const v = document.getElementById('newName').value.trim(); if(v && !people.includes(v)) { people.push(v); render(); } document.getElementById('newName').value=''; }
+function changeMonth(n) { curMonth += n; if(curMonth>11){curMonth=0;curYear++} if(curMonth<0){curMonth=11;curYear--} render(); }
+function goToday() { curYear=new Date().getFullYear(); curMonth=new Date().getMonth(); render(); }
+function exportCSV() {
+  let csv = 'Personne,Date,Type\n';
+  Object.keys(absences).sort().forEach(k => { const [p, d] = k.split('|'); csv += `"${p}","${d}","${absences[k].type}"\n`; });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'absences.csv'; a.click();
+}
+</script>
+</body>
+</html>
