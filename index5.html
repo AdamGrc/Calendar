@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calendrier des absences - Demi-journées</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff; --bg2: #f7f7f5; --bg3: #efefec; --text: #1a1a18; --text2: #6b6b65;
+    --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.18); --radius: 8px; --radius-lg: 12px;
+    --conge-bg: #dbeafe; --conge-text: #1e40af; --conge-border: #93c5fd;
+    --teletravail-bg: #fef3c7; --teletravail-text: #92400e; --teletravail-border: #fcd34d;
+    --maladie-bg: #fee2e2; --maladie-text: #991b1b; --maladie-border: #fca5a5;
+    --autre-bg: #f1f0ec; --autre-text: #44443e; --select-bg: #3b82f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1c1a; --bg2: #252523; --bg3: #2e2e2b; --text: #f0f0ec; --border: rgba(255,255,255,0.1); }
+  }
+  html, body { height: 100%; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; user-select: none; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  .topbar { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 10px; }
+  .leg { display: flex; align-items: center; gap: 4px; }
+  .leg-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  /* Table & Demi-cases */
+  .table-wrap { flex: 1; overflow: auto; }
+  table { border-collapse: collapse; min-width: 100%; }
+  th, td { border: 1px solid var(--border); padding: 0; }
+  .th-name, .td-name { position: sticky; left: 0; background: var(--bg); z-index: 5; padding: 8px; width: 130px; }
+  .th-day { min-width: 35px; text-align: center; font-size: 11px; }
+
+  .cell-container { width: 32px; height: 32px; display: flex; flex-direction: column; cursor: pointer; gap: 1px; padding: 1px; }
+  .half-cell { flex: 1; border-radius: 3px; font-size: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 1px solid transparent; }
+  .half-cell.empty { background: transparent; }
+  .half-cell.selected { background: var(--select-bg) !important; color: white !important; }
+  .wknd { background: var(--bg3); pointer-events: none; opacity: 0.5; }
+
+  /* Types */
+  .conge { background: var(--conge-bg); color: var(--conge-text); border-color: var(--conge-border); }
+  .teletravail { background: var(--teletravail-bg); color: var(--teletravail-text); border-color: var(--teletravail-border); }
+  .maladie { background: var(--maladie-bg); color: var(--maladie-text); border-color: var(--maladie-border); }
+
+  /* Modal */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; align-items: center; justify-content: center; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--bg); border-radius: var(--radius-lg); padding: 20px; width: 320px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+  .type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 15px 0; }
+  .type-btn { padding: 10px; border-radius: var(--radius); border: 2px solid transparent; cursor: pointer; font-size: 11px; font-weight: bold; text-align: center; background: var(--bg2); }
+  .type-btn.sel { border-color: var(--text); }
+  
+  .period-selector { display: flex; border: 1px solid var(--border2); border-radius: var(--radius); overflow: hidden; margin-bottom: 15px; }
+  .p-btn { flex: 1; padding: 8px; border: none; background: var(--bg2); cursor: pointer; font-size: 12px; color: var(--text2); }
+  .p-btn.active { background: var(--select-bg); color: white; }
+</style>
+</head>
+<body onmouseup="endSelection()">
+
+<div id="app">
+  <div class="topbar">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <div style="display:flex; align-items:center; gap:10px">
+        <button class="btn-icon" onclick="changeMonth(-1)">←</button>
+        <span id="monthLabel" style="font-weight:bold; width:150px; text-align:center"></span>
+        <button class="btn-icon" onclick="changeMonth(1)">→</button>
+      </div>
+      <button onclick="addPerson()" style="padding:5px 10px; border-radius:5px; cursor:pointer">+ Personne</button>
+    </div>
+    <div class="legend">
+      <div class="leg"><div class="leg-dot conge"></div> Congé (C)</div>
+      <div class="leg"><div class="leg-dot teletravail"></div> Télétravail (TT)</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div id="mHead" style="font-weight:bold"></div>
+    <div style="font-size:11px; margin: 10px 0 5px">Période :</div>
+    <div class="period-selector">
+      <button class="p-btn" id="p-matin" onclick="setPeriod('Matin')">Matin</button>
+      <button class="p-btn active" id="p-jour" onclick="setPeriod('Journée')">Journée</button>
+      <button class="p-btn" id="p-aprem" onclick="setPeriod('Après-midi')">A-M</button>
+    </div>
+    <div class="type-grid" id="typeGrid">
+      <div class="type-btn conge" onclick="setT('conge')">🏖️ Congé</div>
+      <div class="type-btn teletravail" onclick="setT('teletravail')">🏠 TT</div>
+      <div class="type-btn maladie" onclick="setT('maladie')">🤒 Maladie</div>
+    </div>
+    <div style="display:flex; gap:10px">
+      <button onclick="deleteEntry()" style="color:red; background:none; border:none; cursor:pointer">Supprimer</button>
+      <div style="flex:1"></div>
+      <button onclick="closeModal()">Annuler</button>
+      <button onclick="saveEntry()" style="background:var(--select-bg); color:white; border:none; padding:8px 15px; border-radius:5px; cursor:pointer">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COL_PERSONNE = 'Personne', COL_DATE = 'Date', COL_TYPE = 'Type', COL_PERIODE = 'Periode'; 
+let curYear = new Date().getFullYear(), curMonth = new Date().getMonth();
+let absences = {}, people = [], gristReady = false, tableName = null;
+let isDragging = false, dragP = null, dragS = null, dragE = null, selT = null, selP = 'Journée';
+
+const LABELS = {conge:'C', teletravail:'TT', maladie:'M'};
+
+function dateToStr(v) { return typeof v === 'number' ? new Date(v * 1000).toISOString().slice(0, 10) : String(v).slice(0,10); }
+function strToGristDate(s) { return Math.floor(new Date(s + 'T00:00:00Z').getTime() / 1000); }
+
+function render() {
+  const days = new Date(curYear, curMonth + 1, 0).getDate();
+  document.getElementById('monthLabel').textContent = new Intl.DateTimeFormat('fr-FR', {month:'long', year:'numeric'}).format(new Date(curYear, curMonth));
+  
+  let thead = '<th>Personne</th>';
+  for (let d = 1; d <= days; d++) thead += `<th class="th-day">${d}</th>`;
+  document.getElementById('thead').innerHTML = thead;
+
+  let tbody = '';
+  people.sort().forEach(p => {
+    tbody += `<tr><td class="td-name">${p}</td>`;
+    for (let d = 1; d <= days; d++) {
+      const ds = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const isW = new Date(curYear, curMonth, d).getDay() % 6 === 0;
+      
+      const m = absences[`${p}|${ds}|Matin`] || absences[`${p}|${ds}|Journée`];
+      const a = absences[`${p}|${ds}|Après-midi`] || absences[`${p}|${ds}|Journée`];
+
+      tbody += `<td class="${isW?'wknd':''}">
+        <div class="cell-container" onmousedown="startS('${p}', ${d})" onmouseenter="updateS(${d})">
+          <div class="half-cell ${m?m.type:'empty'}" data-p="${p}" data-d="${d}">${m?LABELS[m.type]:''}</div>
+          <div class="half-cell ${a?a.type:'empty'}" data-p="${p}" data-d="${d}">${a?LABELS[a.type]:''}</div>
+        </div>
+      </td>`;
+    }
+    tbody += '</tr>';
+  });
+  document.getElementById('tbody').innerHTML = tbody;
+}
+
+// -- SÉLECTION --
+function startS(p, d) { isDragging = true; dragP = p; dragS = d; dragE = d; updateV(); }
+function updateS(d) { if(isDragging) { dragE = d; updateV(); } }
+function updateV() {
+  const min = Math.min(dragS, dragE), max = Math.max(dragS, dragE);
+  document.querySelectorAll('.half-cell').forEach(el => {
+    el.classList.toggle('selected', isDragging && el.dataset.p === dragP && el.dataset.d >= min && el.dataset.d <= max);
+  });
+}
+function endSelection() {
+  if(!isDragging) return; isDragging = false;
+  let dates = [];
+  for(let d=Math.min(dragS, dragE); d<=Math.max(dragS, dragE); d++) {
+    if(new Date(curYear, curMonth, d).getDay()%6 !== 0) dates.push(`${curYear}-${String(curMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+  }
+  if(dates.length) {
+    modalCtx = {p:dragP, dts:dates};
+    document.getElementById('mHead').textContent = dragP;
+    setPeriod('Journée');
+    document.getElementById('overlay').classList.add('open');
+  }
+}
+
+function setPeriod(p) {
+  selP = p;
+  document.querySelectorAll('.p-btn').forEach(b => b.classList.toggle('active', b.id.includes(p.toLowerCase().substring(0,3))));
+}
+function setT(t) { selT = t; document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('sel', b.classList.contains(t))); }
+function closeModal() { document.getElementById('overlay').classList.remove('open'); updateV(); selT = null; }
+
+// -- GRIST --
+async function saveEntry() {
+  if (!selT || !tableName) return closeModal();
+  const actions = [];
+  for (const d of modalCtx.dts) {
+    const existing = absences[`${modalCtx.p}|${d}|${selP}`];
+    if (existing) actions.push(['UpdateRecord', tableName, existing.rowId, {[COL_TYPE]: selT}]);
+    else actions.push(['AddRecord', tableName, null, {[COL_PERSONNE]: modalCtx.p, [COL_DATE]: strToGristDate(d), [COL_TYPE]: selT, [COL_PERIODE]: selP}]);
+    absences[`${modalCtx.p}|${d}|${selP}`] = {type: selT}; 
+  }
+  render(); closeModal();
+  await grist.docApi.applyUserActions(actions);
+}
+
+async function deleteEntry() {
+  const actions = [];
+  for (const d of modalCtx.dts) {
+    ['Journée', 'Matin', 'Après-midi'].forEach(p => {
+      const key = `${modalCtx.p}|${d}|${p}`;
+      if (absences[key]?.rowId) actions.push(['RemoveRecord', tableName, absences[key].rowId]);
+      delete absences[key];
+    });
+  }
+  render(); closeModal();
+  await grist.docApi.applyUserActions(actions);
+}
+
+grist.ready({ requiredAccess: 'full' });
+grist.onRecords((records) => {
+  if (!tableName && records.length > 0) tableName = records[0]._tableId;
+  absences = {};
+  records.forEach(r => {
+    const p = String(r[COL_PERSONNE]||''), d = dateToStr(r[COL_DATE]), t = String(r[COL_TYPE]||'').toLowerCase();
+    const per = r[COL_PERIODE] || 'Journée';
+    if(p && d) {
+      if(!people.includes(p)) people.push(p);
+      absences[`${p}|${d}|${per}`] = { rowId: r.id, type: t };
+    }
+  });
+  render();
+});
+grist.on('message', m => { if(m.tableId) tableName = m.tableId; });
+
+function changeMonth(n) { curMonth += n; if(curMonth>11){curMonth=0;curYear++} if(curMonth<0){curMonth=11;curYear--} render(); }
+function addPerson() { const v = prompt("Nom ?"); if(v) { people.push(v); render(); } }
+</script>
+</body>
+</html>
