@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calendrier des absences - Complet</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff; --bg2: #f7f7f5; --bg3: #efefec; --text: #1a1a18; --text2: #6b6b65;
+    --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.18); --radius: 8px; --radius-lg: 12px;
+    --conge-bg: #dbeafe; --conge-text: #1e40af; --conge-border: #93c5fd;
+    --stage-bg: #dcfce7; --stage-text: #166534; --stage-border: #86efac;
+    --teletravail-bg: #fef3c7; --teletravail-text: #92400e; --teletravail-border: #fcd34d;
+    --maladie-bg: #fee2e2; --maladie-text: #991b1b; --maladie-border: #fca5a5;
+    --formation-bg: #ede9fe; --formation-text: #5b21b6; --formation-border: #c4b5fd;
+    --autre-bg: #f1f0ec; --autre-text: #44443e; --autre-border: #d0cfc8;
+    --select-bg: #3b82f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1c1a; --bg2: #252523; --bg3: #2e2e2b; --text: #f0f0ec; --border: rgba(255,255,255,0.1); }
+  }
+  html, body { height: 100%; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; user-select: none; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  .topbar { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .leg { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--text2); }
+  .leg-dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid transparent; display: flex; align-items: center; justify-content: center; font-size: 7px; color: inherit; }
+
+  .table-wrap { flex: 1; overflow: auto; }
+  table { border-collapse: collapse; min-width: 100%; }
+  th, td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 0; }
+  .th-name, .td-name { position: sticky; left: 0; background: var(--bg); z-index: 5; padding: 8px 12px; width: 140px; font-weight: 500; }
+  .th-day { min-width: 34px; text-align: center; font-size: 11px; padding: 5px 0; }
+
+  .cell-container { width: 32px; height: 34px; display: flex; flex-direction: column; cursor: pointer; padding: 2px; gap: 1px; }
+  .half-cell { flex: 1; border-radius: 2px; font-size: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 1px solid transparent; }
+  .half-cell.selected { background: var(--select-bg) !important; color: white !important; }
+  .wknd { background: var(--bg3); opacity: 0.6; pointer-events: none; }
+
+  .conge { background: var(--conge-bg); color: var(--conge-text); border-color: var(--conge-border); }
+  .stage { background: var(--stage-bg); color: var(--stage-text); border-color: var(--stage-border); }
+  .teletravail { background: var(--teletravail-bg); color: var(--teletravail-text); border-color: var(--teletravail-border); }
+  .maladie { background: var(--maladie-bg); color: var(--maladie-text); border-color: var(--maladie-border); }
+  .formation { background: var(--formation-bg); color: var(--formation-text); border-color: var(--formation-border); }
+  .autre { background: var(--autre-bg); color: var(--autre-text); border-color: var(--autre-border); }
+
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; align-items: center; justify-content: center; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--bg); border-radius: var(--radius-lg); padding: 20px; width: 340px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+  
+  .period-selector { display: flex; border: 1px solid var(--border2); border-radius: var(--radius); overflow: hidden; margin: 15px 0; }
+  .p-btn { flex: 1; padding: 10px; border: none; background: var(--bg2); cursor: pointer; font-size: 12px; color: var(--text2); }
+  .p-btn.active { background: var(--select-bg); color: white; }
+
+  .type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+  .type-btn { padding: 12px 8px; border-radius: var(--radius); border: 2px solid transparent; cursor: pointer; font-size: 11px; font-weight: 600; text-align: center; background: var(--bg2); }
+  .type-btn.sel { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+</style>
+</head>
+<body onmouseup="endSelection()">
+
+<div id="app">
+  <div class="topbar">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <div style="display:flex; align-items:center; gap:8px">
+        <button class="p-btn" style="border-radius:5px; padding:5px 10px" onclick="changeMonth(-1)">←</button>
+        <span id="monthLabel" style="font-weight:bold; width:160px; text-align:center; font-size:16px"></span>
+        <button class="p-btn" style="border-radius:5px; padding:5px 10px" onclick="changeMonth(1)">→</button>
+      </div>
+      <button class="p-btn" style="background:var(--select-bg); color:white; border-radius:5px; padding:6px 12px" onclick="addPerson()">+ Personne</button>
+    </div>
+    <div class="legend">
+      <div class="leg"><div class="leg-dot conge">C</div> Congé</div>
+      <div class="leg"><div class="leg-dot teletravail">TT</div> Télétravail</div>
+      <div class="leg"><div class="leg-dot stage">St</div> Stage</div>
+      <div class="leg"><div class="leg-dot maladie">M</div> Maladie</div>
+      <div class="leg"><div class="leg-dot formation">F</div> Formation</div>
+      <div class="leg"><div class="leg-dot autre">A</div> Autre</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div id="mHead" style="font-size:16px; font-weight:bold"></div>
+    <div style="font-size:11px; color:var(--text2); margin-top:15px">1. Période (par défaut Journée) :</div>
+    <div class="period-selector">
+      <button class="p-btn" id="p-matin" onclick="setPeriod('Matin')">Matin</button>
+      <button class="p-btn" id="p-jour" onclick="setPeriod('Journée')">Journée</button>
+      <button class="p-btn" id="p-aprem" onclick="setPeriod('Après-midi')">A-M</button>
+    </div>
+    <div style="font-size:11px; color:var(--text2); margin-bottom:8px">2. Choisir le type :</div>
+    <div class="type-grid">
+      <div class="type-btn conge" onclick="setT('conge')">🏖️ Congé</div>
+      <div class="type-btn teletravail" onclick="setT('teletravail')">🏠 TT</div>
+      <div class="type-btn stage" onclick="setT('stage')">🎓 Stage</div>
+      <div class="type-btn maladie" onclick="setT('maladie')">🤒 Maladie</div>
+      <div class="type-btn formation" onclick="setT('formation')">📚 Formation</div>
+      <div class="type-btn autre" onclick="setT('autre')">📌 Autre</div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center">
+      <button onclick="deleteEntry()" style="color:#dc2626; background:none; border:none; cursor:pointer; font-size:12px">Supprimer</button>
+      <div style="flex:1"></div>
+      <button class="p-btn" style="border-radius:5px" onclick="closeModal()">Annuler</button>
+      <button class="p-btn" style="background:var(--select-bg); color:white; border-radius:5px; font-weight:bold" onclick="saveEntry()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COL_PERSONNE = 'Personne', COL_DATE = 'Date', COL_TYPE = 'Type', COL_PERIODE = 'Periode'; 
+let curYear = new Date().getFullYear(), curMonth = new Date().getMonth();
+let absences = {}, people = [], tableName = null;
+let isDragging = false, dragP = null, dragS = null, dragE = null, selT = null, selP = 'Journée';
+
+const LABELS = {conge:'C', stage:'St', teletravail:'TT', maladie:'M', formation:'F', autre:'A'};
+
+function dateToStr(v) { return typeof v === 'number' ? new Date(v * 1000).toISOString().slice(0, 10) : String(v).slice(0,10); }
+function strToGristDate(s) { return Math.floor(new Date(s + 'T00:00:00Z').getTime() / 1000); }
+
+function render() {
+  const days = new Date(curYear, curMonth + 1, 0).getDate();
+  document.getElementById('monthLabel').textContent = new Intl.DateTimeFormat('fr-FR', {month:'long', year:'numeric'}).format(new Date(curYear, curMonth));
+  
+  let thead = '<th class="th-name">Personne</th>';
+  for (let d = 1; d <= days; d++) {
+    const isW = new Date(curYear, curMonth, d).getDay() % 6 === 0;
+    thead += `<th class="th-day ${isW?'wknd':''}">${d}</th>`;
+  }
+  document.getElementById('thead').innerHTML = thead;
+
+  let tbody = '';
+  people.sort().forEach(p => {
+    tbody += `<tr><td class="td-name">${p}</td>`;
+    for (let d = 1; d <= days; d++) {
+      const ds = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const isW = new Date(curYear, curMonth, d).getDay() % 6 === 0;
+      const m = absences[`${p}|${ds}|Matin`] || absences[`${p}|${ds}|Journée`];
+      const a = absences[`${p}|${ds}|Après-midi`] || absences[`${p}|${ds}|Journée`];
+
+      tbody += `<td class="${isW?'wknd':''}">
+        <div class="cell-container" onmousedown="startS('${p}', ${d})" onmouseenter="updateS(${d})">
+          <div class="half-cell ${m?m.type:'empty'}" data-p="${p}" data-d="${d}">${m?LABELS[m.type]:''}</div>
+          <div class="half-cell ${a?a.type:'empty'}" data-p="${p}" data-d="${d}">${a?LABELS[a.type]:''}</div>
+        </div>
+      </td>`;
+    }
+    tbody += '</tr>';
+  });
+  document.getElementById('tbody').innerHTML = tbody;
+}
+
+function startS(p, d) { isDragging = true; dragP = p; dragS = d; dragE = d; updateV(); }
+function updateS(d) { if(isDragging) { dragE = d; updateV(); } }
+function updateV() {
+  const min = Math.min(dragS, dragE), max = Math.max(dragS, dragE);
+  document.querySelectorAll('.half-cell').forEach(el => {
+    const d = parseInt(el.dataset.d);
+    el.classList.toggle('selected', isDragging && el.dataset.p === dragP && d >= min && d <= max);
+  });
+}
+
+function endSelection() {
+  if(!isDragging) return; isDragging = false;
+  let dates = [];
+  for(let d=Math.min(dragS, dragE); d<=Math.max(dragS, dragE); d++) {
+    if(new Date(curYear, curMonth, d).getDay()%6 !== 0) dates.push(`${curYear}-${String(curMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+  }
+  if(dates.length) {
+    modalCtx = {p:dragP, dts:dates};
+    document.getElementById('mHead').textContent = dragP;
+    // Forcer "Journée" par défaut à chaque ouverture
+    setPeriod('Journée'); 
+    document.getElementById('overlay').classList.add('open');
+  }
+}
+
+function setPeriod(p) {
+  selP = p;
+  document.querySelectorAll('.p-btn').forEach(b => {
+    const isTarget = b.id === 'p-' + (p === 'Après-midi' ? 'aprem' : (p === 'Journée' ? 'jour' : 'matin'));
+    b.classList.toggle('active', isTarget);
+  });
+}
+
+function setT(t) { selT = t; document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('sel', b.classList.contains(t))); }
+function closeModal() { document.getElementById('overlay').classList.remove('open'); updateV(); selT = null; }
+
+async function saveEntry() {
+  if (!selT || !tableName) return closeModal();
+  const actions = [];
+  for (const d of modalCtx.dts) {
+    const existing = absences[`${modalCtx.p}|${d}|${selP}`];
+    if (existing?.rowId) actions.push(['UpdateRecord', tableName, existing.rowId, {[COL_TYPE]: selT}]);
+    else actions.push(['AddRecord', tableName, null, {[COL_PERSONNE]: modalCtx.p, [COL_DATE]: strToGristDate(d), [COL_TYPE]: selT, [COL_PERIODE]: selP}]);
+  }
+  closeModal();
+  await grist.docApi.applyUserActions(actions);
+}
+
+async function deleteEntry() {
+  const actions = [];
+  for (const d of modalCtx.dts) {
+    ['Journée', 'Matin', 'Après-midi'].forEach(p => {
+      const key = `${modalCtx.p}|${d}|${p}`;
+      if (absences[key]?.rowId) actions.push(['RemoveRecord', tableName, absences[key].rowId]);
+    });
+  }
+  closeModal();
+  await grist.docApi.applyUserActions(actions);
+}
+
+grist.ready({ requiredAccess: 'full' });
+grist.onRecords((records) => {
+  if (!tableName && records.length > 0) tableName = records[0]._tableId;
+  absences = {};
+  records.forEach(r => {
+    const p = String(r[COL_PERSONNE]||'').trim(), d = dateToStr(r[COL_DATE]), t = String(r[COL_TYPE]||'').toLowerCase();
+    const per = r[COL_PERIODE] || 'Journée';
+    if(p && d) {
+      if(!people.includes(p)) people.push(p);
+      absences[`${p}|${d}|${per}`] = { rowId: r.id, type: t };
+    }
+  });
+  render();
+});
+
+function changeMonth(n) { curMonth += n; if(curMonth>11){curMonth=0;curYear++} if(curMonth<0){curMonth=11;curYear--} render(); }
+function addPerson() { const v = prompt("Nom de la personne ?"); if(v) { people.push(v); render(); } }
+</script>
+</body>
+</html>
